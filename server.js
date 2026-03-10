@@ -8,7 +8,7 @@ import FacultyRouter from "./router/facultyRouter.js";
 dotenv.config();
 const app = express();
 
-app.use(cors({ origin: "https://faculty-dashboard-front.vercel.app" }));
+app.use(cors({ origin: "https://faculty-dashboard-front.vercel.app" ,credentials:true}));
 
 app.use(express.json());
 
