@@ -68,7 +68,12 @@ export const insertStudentWithExcel = async (req, res) => {
       });
     }
 
-    const workbook = XLSX.readFile(req.file.path);
+    // ❌ Old disk storage method (does not work on Vercel)
+    // const workbook = XLSX.readFile(req.file.path);
+
+    // ✅ Vercel compatible (multer memoryStorage)
+    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+
     const sheetName = workbook.SheetNames[0];
     const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
@@ -82,12 +87,11 @@ export const insertStudentWithExcel = async (req, res) => {
     const faculty = await Faculty.findOne({ clerkId: clerkId });
 
     if (!faculty) {
-      res.json({ success: false, message: "User not found" });
+      return res.json({ success: false, message: "User not found" });
     }
 
     // ✅ Format properly
     const students = sheetData.map((row) => {
-      // convert dd-mm-yyyy → Date
       const [day, month, year] = row["Admission Date"].split("-");
 
       return {
@@ -108,8 +112,8 @@ export const insertStudentWithExcel = async (req, res) => {
     // ✅ Insert
     const insertedStudents = await Student.insertMany(students);
 
-    // ✅ Delete file after processing
-    fs.unlinkSync(req.file.path);
+    // ❌ Not needed anymore because file is in memory
+    // fs.unlinkSync(req.file.path);
 
     return res.status(200).json({
       success: true,
@@ -201,9 +205,9 @@ export const DeleteStudent = async (req, res) => {
 
 export const changeStatus = async (req, res) => {
   try {
-    const {id,status} = req.body;
+    const { id, status } = req.body;
 
-     await Student.findByIdAndUpdate(id, { status });
+    await Student.findByIdAndUpdate(id, { status });
 
     res.json({ success: true, message: "Status Changed" });
   } catch (error) {
@@ -218,17 +222,20 @@ export const studentDetails = async (req, res) => {
     const { id } = req.body;
 
     if (!id) {
-      return res.status(400).json({ success: false, message: "Student id required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Student id required" });
     }
 
     const student = await Student.findById(id);
 
     if (!student) {
-      return res.status(404).json({ success: false, message: "Student not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Student not found" });
     }
 
     console.log(student);
-    
 
     res.json({
       success: true,

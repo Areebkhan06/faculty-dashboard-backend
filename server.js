@@ -8,7 +8,7 @@ import FacultyRouter from "./router/facultyRouter.js";
 dotenv.config();
 const app = express();
 
-app.use(cors({ origin: "https://faculty-dashboard-front.vercel.app", credentials: true }));
+app.use(cors({ origin: "https://faculty-dashboard-front.vercel.app" ,credentials:true}));
 
 app.use(express.json());
 
@@ -19,19 +19,11 @@ app.get("/", (req, res) => {
   res.send("Api is working");
 });
 
-app.use("/api", studentRouter);
-app.use("/api", FacultyRouter);
+app.use("/api",studentRouter)
+app.use("/api",FacultyRouter)
 
-// const port = process.env.PORT;
+const port = process.env.PORT;
 
-// app.listen(port, () => {
-//   console.log(`Server is running on http://localhost:${port}`);
-// });
-
-/*
-Vercel does not require app.listen().
-It automatically handles the server in serverless functions.
-*/
-
-// Export app for Vercel
-export default app;
+app.listen(port, () => {
+  console.log(`Server is running on http://localhost:${port}`);
+});
