@@ -114,7 +114,7 @@ export const insertStudentWithExcel = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Students imported successfully",
-      // insertedCount: insertedStudents.length,
+      insertedCount: insertedStudents.length,
     });
   } catch (error) {
     console.log(error);
@@ -196,5 +196,47 @@ export const DeleteStudent = async (req, res) => {
       success: false,
       message: "Server error",
     });
+  }
+};
+
+export const changeStatus = async (req, res) => {
+  try {
+    const {id,status} = req.body;
+
+     await Student.findByIdAndUpdate(id, { status });
+
+    res.json({ success: true, message: "Status Changed" });
+  } catch (error) {
+    res.json({ success: false, message: error.message });
+  }
+};
+
+export const studentDetails = async (req, res) => {
+  try {
+    console.log("Request Body:", req.body);
+
+    const { id } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: "Student id required" });
+    }
+
+    const student = await Student.findById(id);
+
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+
+    console.log(student);
+    
+
+    res.json({
+      success: true,
+      message: "data fetched",
+      student,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
