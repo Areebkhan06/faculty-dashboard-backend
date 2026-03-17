@@ -1,18 +1,9 @@
 import express from "express";
-import { changeStatus, DeleteStudent, fetchAllStudents, insertStudentWithExcel, studentDetails, studentinfoInsert } from "../controller/studentController.js";
+import { changeStatus, DeleteStudent, fetchAllStudents, fetchFees, insertStudentWithExcel, markFeesPaid, studentDetails, studentinfoInsert } from "../controller/studentController.js";
 import { requireAuth } from "../utils/middleware.js";
 import multer from "multer";
 
 const studentRouter = express.Router();
-
-// ❌ This does not work on Vercel because serverless filesystem is read-only
-// const upload = multer({ dest: "uploads/" });
-
-/*
-Vercel cannot create folders like uploads/.
-So we use memory storage instead.
-The file will stay in RAM during request.
-*/
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -23,5 +14,7 @@ studentRouter.post("/upload-students", requireAuth, upload.single("file"), inser
 studentRouter.post("/delete-student", requireAuth, DeleteStudent);
 studentRouter.post("/change-status", requireAuth, changeStatus);
 studentRouter.post("/student-details", studentDetails);
+studentRouter.post("/get-fees", requireAuth,fetchFees);
+studentRouter.post("/mark-fee-paid", requireAuth,markFeesPaid);
 
 export default studentRouter;
