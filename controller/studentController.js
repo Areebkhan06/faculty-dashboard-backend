@@ -90,53 +90,127 @@ export const insertStudentWithExcel = async (req, res) => {
       });
     }
 
+    // =========================
+    // READ EXCEL
+    // =========================
     const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-
     const sheetName = workbook.SheetNames[0];
-    const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+    const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      raw: true,
+    });
 
     if (!sheetData.length) {
       return res.status(400).json({
         success: false,
-        message: "Excel file is empty",
+        message: "Empty Excel file",
       });
     }
 
+    // =========================
+    // FIND FACULTY
+    // =========================
     const faculty = await Faculty.findOne({ clerkId });
 
     if (!faculty) {
-      return res.json({ success: false, message: "User not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Faculty not found",
+      });
     }
 
-    // Format student data
-    const students = sheetData.map((row) => {
-      const [day, month, year] = row["Admission Date"].split("-");
+    // =========================
+    // DATE PARSER (FIXED)
+    // =========================
+    const parseExcelDate = (value) => {
+      if (!value) return null;
 
-      return {
-        facultyId: faculty._id,
-        name: row["Student Name"]?.trim(),
-        phone: row["Phone Number"]?.toString().trim(),
-        rollno: row["rollno"]?.toString().trim(),
-        course: row["Course"]?.trim(),
-        courseDuration: row["Course Duration"]?.trim(),
-        monthlyFee: Number(row["Monthly Fee"] || 0),
-        admissionDate: new Date(`${year}-${month}-${day}`),
-        batch: row["Batch Timing"],
-        days: row["Class Days"],
-        status: "active",
-      };
-    });
+      // ✅ Excel serial number
+      if (typeof value === "number") {
+        const parsed = XLSX.SSF.parse_date_code(value);
+        return new Date(parsed.y, parsed.m - 1, parsed.d);
+      }
 
-    // Insert students
+      // ✅ JS Date
+      if (value instanceof Date) return value;
+
+      // ✅ STRING (your case)
+      if (typeof value === "string") {
+        const parts = value.split("-");
+
+        if (parts.length !== 3) return null;
+
+        let [day, month, year] = parts;
+
+        // FIX 2-digit year
+        if (year.length === 2) {
+          year = "20" + year;
+        }
+
+        const date = new Date(`${year}-${month}-${day}`);
+
+        return isNaN(date) ? null : date;
+      }
+
+      return null;
+    };
+
+    // =========================
+    // CLEAN + FORMAT DATA
+    // =========================
+    const students = sheetData
+      .map((row, index) => {
+        const phone = row["Phone Number"]?.toString().trim();
+
+        // ❌ skip if phone missing
+        if (!phone) {
+          console.log(`❌ Missing phone at row ${index + 2}`);
+          return null;
+        }
+
+        const admissionDate = parseExcelDate(row["Admission Date"]);
+
+        if (!admissionDate) {
+          console.log(`❌ Invalid date at row ${index + 2}`);
+          return null;
+        }
+
+        return {
+          facultyId: faculty._id,
+          name: row["Student Name"]?.trim(),
+          phone,
+          rollno: row["rollno"]?.toString().trim(),
+          course: row["Course"]?.trim(),
+          courseDuration: row["Course Duration"]?.trim(),
+          monthlyFee: Number(row["Monthly Fee"] || 0),
+          admissionDate,
+          batch: row["Batch Timing"]?.replace(" TO ", "-"),
+          days: row["Class Days"]?.trim(),
+          status: "active",
+        };
+      })
+      .filter(Boolean);
+
+    if (!students.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid students found",
+      });
+    }
+
+    // =========================
+    // INSERT STUDENTS
+    // =========================
     const insertedStudents = await Student.insertMany(students);
 
-    // 🔹 Current month info
+    // =========================
+    // CREATE FEES
+    // =========================
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
     const dueDate = new Date(year, month - 1, 7);
 
-    // 🔹 Create fees for all students
     const Fees = insertedStudents.map((student) => ({
       studentId: student._id,
       facultyId: student.facultyId,
@@ -151,11 +225,10 @@ export const insertStudentWithExcel = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Students and Fees imported successfully",
-      insertedCount: insertedStudents.length,
+      message: "Upload successful",
     });
   } catch (error) {
-    console.log(error);
+    console.log("❌ ERROR:", error);
 
     return res.status(500).json({
       success: false,
@@ -591,7 +664,6 @@ export const markFeesPaid = async (req, res) => {
         },
         { upsert: true, returnDocument: "after" }, // ✅ FIXED
       );
-
     }
 
     // =========================
