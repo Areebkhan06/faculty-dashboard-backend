@@ -688,3 +688,37 @@ export const markFeesPaid = async (req, res) => {
     });
   }
 };
+
+// DELETE STUDENTS OF LOGGED-IN FACULTY
+export const deleteMyStudents = async (req, res) => {
+  try {
+    const clerkId = req.userId;
+
+    // ✅ Find faculty
+    const faculty = await Faculty.findOne({ clerkId });
+
+    if (!faculty) {
+      return res.status(404).json({
+        success: false,
+        message: "Faculty not found",
+      });
+    }
+
+    // ✅ Delete only that faculty students
+    const result = await Student.deleteMany({
+      facultyId: faculty._id,
+    });
+
+    res.json({
+      success: true,
+      message: "All your students deleted",
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.log("Delete error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
