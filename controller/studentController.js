@@ -690,7 +690,7 @@ export const markFeesPaid = async (req, res) => {
 };
 
 // DELETE STUDENTS OF LOGGED-IN FACULTY
-export const deleteMyStudents = async (req, res) => {
+export const deleteAllStudents = async (req, res) => {
   try {
     const clerkId = req.userId;
 
@@ -704,18 +704,18 @@ export const deleteMyStudents = async (req, res) => {
       });
     }
 
-    // ✅ Delete only that faculty students
+    // ✅ Delete all students of this faculty
     const result = await Student.deleteMany({
       facultyId: faculty._id,
     });
 
-    res.json({
+    res.status(200).json({
       success: true,
-      message: "All your students deleted",
+      message: "All students deleted successfully",
       deletedCount: result.deletedCount,
     });
   } catch (error) {
-    console.log("Delete error:", error);
+    console.log("Error deleting students:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
