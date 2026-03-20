@@ -74,8 +74,6 @@ export const checkProfileCompleted = async (req, res) => {
 
 export const sendTransferRequest = async (req, res) => {
   try {
-    console.log("req.body →", req.body);
-
     const {
       feeId,
       studentId,
@@ -87,32 +85,13 @@ export const sendTransferRequest = async (req, res) => {
       note,
     } = req.body;
 
-    if (!feeId)
-      return res
-        .status(400)
-        .json({ success: false, message: "feeId is required" });
-    if (!studentId)
-      return res
-        .status(400)
-        .json({ success: false, message: "studentId is required" });
-    if (!fromFaculty)
-      return res
-        .status(400)
-        .json({ success: false, message: "fromFaculty is required" });
-    if (!toFaculty)
-      return res
-        .status(400)
-        .json({ success: false, message: "toFaculty is required" });
-    if (!batchTiming)
-      return res
-        .status(400)
-        .json({ success: false, message: "batchTiming is required" });
-    if (!days)
-      return res
-        .status(400)
-        .json({ success: false, message: "days is required" });
+    if (!feeId)       return res.status(400).json({ success: false, message: "feeId is required" });
+    if (!studentId)   return res.status(400).json({ success: false, message: "studentId is required" });
+    if (!fromFaculty) return res.status(400).json({ success: false, message: "fromFaculty is required" });
+    if (!toFaculty)   return res.status(400).json({ success: false, message: "toFaculty is required" });
+    if (!batchTiming) return res.status(400).json({ success: false, message: "batchTiming is required" });
+    if (!days)        return res.status(400).json({ success: false, message: "days is required" });
 
-    // ✅ Create transfer request in separate collection
     const request = await transferRequest.create({
       feeId,
       studentId,
@@ -124,21 +103,10 @@ export const sendTransferRequest = async (req, res) => {
       note,
     });
 
-    // ✅ Update transferStatus to "pending" on the fee (not status field)
-    const updatedFee = await fees.findByIdAndUpdate(
-      feeId,
-      { transferStatus: "pending" },
-      { new: true },
-    );
+    const updatedFee = await fees.findByIdAndUpdate(feeId, { transferStatus: "pending" });
+    if (!updatedFee) return res.status(404).json({ success: false, message: "Fee not found" });
 
-    if (!updatedFee)
-      return res.status(404).json({ success: false, message: "Fee not found" });
-
-    console.log("updatedFee transferStatus →", updatedFee.transferStatus);
-
-    res
-      .status(201)
-      .json({ success: true, message: "Transfer request sent", data: request });
+    res.status(201).json({ success: true, message: "Transfer request sent", data: request });
   } catch (err) {
     console.error("sendTransferRequest error →", err.message);
     res.status(500).json({ success: false, message: err.message });
@@ -150,20 +118,19 @@ export const fetchRequest = async (req, res) => {
     const clerkId = req.userId;
 
     const faculty = await Faculty.findOne({ clerkId });
-
-    console.log(faculty);
-    
-    if (!faculty)
-      return res.status(404).json({ success: false, message: "Faculty not found" });
+    if (!faculty) return res.status(404).json({ success: false, message: "Faculty not found" });
+console.log("faculty",faculty);
 
     const requests = await transferRequest
-      .find({ toFaculty: faculty._id, status: "pending" }) // ✅ toFaculty
+      .find({ toFaculty: faculty._id, status: "pending" })
       .populate("studentId",   "name email phoneNumber")
       .populate("fromFaculty", "name department")
       .populate("feeId",       "amount month year")
       .sort({ createdAt: -1 });
 
-    console.log("incoming requests →", requests.length);
+
+     console.log(requests);
+      
 
     res.status(200).json({
       success: true,
