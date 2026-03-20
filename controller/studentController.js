@@ -722,3 +722,49 @@ export const deleteAllStudents = async (req, res) => {
     });
   }
 };
+
+export const fetchFaculty = async (req, res) => {
+  try {
+    const clerkId = req.userId;
+
+    const faculties = await Faculty.find(
+      {}, // no filter (all records)
+      { name: 1 }, // only name ( _id comes by default )
+    );
+
+    res.status(200).json({
+      success: true,
+      data: faculties,
+    });
+  } catch (error) {
+    console.error("Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch faculty",
+    });
+  }
+};
+
+// Controller
+export const fetchStudentData = async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    const fee = await fees.findById(id)
+      .populate("studentId", "name email phoneNumber")
+      .populate("facultyId", "name department");
+
+    if (!fee) {
+      return res.status(404).json({ success: false, message: "Fee not found" });
+    }
+
+    console.log(fee);
+    
+
+    res.json({ success: true, message: "Data Fetched", data: fee });
+  } catch (error) {
+    console.log(error.message);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
