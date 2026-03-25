@@ -38,8 +38,16 @@ const StudentSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["active", "dropout"],
+      enum: ["active", "dropout","completed"],
       default: "active",
+    },
+    isCompleted: {
+      type: Boolean,
+      default: false, // ✅ true/false
+    },
+    completedAt: {
+      type: Date,
+      default: null, // ✅ date when completed
     },
     monthlyFee: {
       type: Number,
@@ -50,7 +58,7 @@ const StudentSchema = new mongoose.Schema(
       default: Date.now,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const Student = mongoose.model("Student", StudentSchema);

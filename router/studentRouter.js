@@ -1,5 +1,5 @@
 import express from "express";
-import { changeStatus, deleteAllStudents, DeleteStudent, fetchAllStudents, fetchFaculty, fetchFees, fetchStudentData, insertStudentWithExcel, markFeesPaid, studentDetails, studentinfoInsert } from "../controller/studentController.js";
+import { changeStatus, deleteAllStudents, DeleteStudent, fetchAllStudents, fetchFaculty, fetchFees, fetchStudentData, insertStudentWithExcel, markComplete, markFeePaid, studentDetails, studentinfoInsert } from "../controller/studentController.js";
 import { requireAuth } from "../utils/middleware.js";
 import multer from "multer";
 
@@ -15,10 +15,11 @@ studentRouter.post("/delete-student", requireAuth, DeleteStudent);
 studentRouter.post("/change-status", requireAuth, changeStatus);
 studentRouter.post("/student-details", studentDetails);
 studentRouter.post("/get-fees", requireAuth,fetchFees);
-studentRouter.post("/mark-fee-paid", requireAuth,markFeesPaid);
+studentRouter.post("/mark-fee-paid", requireAuth,markFeePaid);
 studentRouter.post("/delete-all-students", requireAuth, deleteAllStudents);
 studentRouter.get("/fetch-faculty", requireAuth, fetchFaculty);
 studentRouter.post("/fees-student-details",fetchStudentData );
+studentRouter.post("/marke-complete",requireAuth,markComplete);
 
 
 export default studentRouter;
