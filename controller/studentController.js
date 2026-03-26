@@ -295,20 +295,28 @@ cron.schedule("0 1 8 * *", async () => {
   );
 });
 
+const getFeeStatus = (month, year) => {
+  const today = new Date();
+  const todayDate = today.getDate();
+  const todayMonth = today.getMonth() + 1;
+  const todayYear = today.getFullYear();
+
+  const isCurrentMonth = month === todayMonth && year === todayYear;
+  return isCurrentMonth && todayDate > 7 ? "not_paid_on_time" : "unpaid";
+};
+
+// ── studentinfoInsert ─────────────────────────────────────────────────────────
 export const studentinfoInsert = async (req, res) => {
   try {
     const clerkId = req.userId;
 
-    // 1️⃣ Find faculty
     const faculty = await Faculty.findOne({ clerkId });
-
     if (!faculty) {
       return res
         .status(404)
         .json({ success: false, message: "Faculty not found" });
     }
 
-    // 2️⃣ Get student data
     const {
       name,
       phone,
@@ -321,7 +329,6 @@ export const studentinfoInsert = async (req, res) => {
       days,
     } = req.body;
 
-    // 3️⃣ Create Student
     const newStudent = new Student({
       name,
       phone,
@@ -337,13 +344,9 @@ export const studentinfoInsert = async (req, res) => {
 
     await newStudent.save();
 
-    // 4️⃣ Create Fee Record for Current Month
     const now = new Date();
-
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
-
-    const dueDate = new Date(year, month - 1, 7); // 7th of month
 
     await fees.create({
       studentId: newStudent._id,
@@ -351,120 +354,79 @@ export const studentinfoInsert = async (req, res) => {
       month,
       year,
       amount: fee,
-      dueDate,
-      status: "unpaid",
+      dueDate: new Date(year, month - 1, 7),
+      status: getFeeStatus(month, year), // 👈 fixed
     });
 
-    res.status(201).json({
-      success: true,
-      message: "Student and Fee created successfully",
-    });
+    res
+      .status(201)
+      .json({ success: true, message: "Student and Fee created successfully" });
   } catch (error) {
     console.error("Error inserting student:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
+// ── insertStudentWithExcel ────────────────────────────────────────────────────
 export const insertStudentWithExcel = async (req, res) => {
   try {
     const clerkId = req.userId;
 
     if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "No file uploaded",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
     }
 
-    // =========================
-    // READ EXCEL
-    // =========================
     const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
     const sheetName = workbook.SheetNames[0];
-
     const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
       raw: true,
     });
 
     if (!sheetData.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Empty Excel file",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Empty Excel file" });
     }
 
-    // =========================
-    // FIND FACULTY
-    // =========================
     const faculty = await Faculty.findOne({ clerkId });
-
     if (!faculty) {
-      return res.status(404).json({
-        success: false,
-        message: "Faculty not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Faculty not found" });
     }
 
-    // =========================
-    // DATE PARSER (FIXED)
-    // =========================
     const parseExcelDate = (value) => {
       if (!value) return null;
-
-      // ✅ Excel serial number
       if (typeof value === "number") {
         const parsed = XLSX.SSF.parse_date_code(value);
         return new Date(parsed.y, parsed.m - 1, parsed.d);
       }
-
-      // ✅ JS Date
       if (value instanceof Date) return value;
-
-      // ✅ STRING (your case)
       if (typeof value === "string") {
         const parts = value.split("-");
-
         if (parts.length !== 3) return null;
-
         let [day, month, year] = parts;
-
-        // FIX 2-digit year
-        if (year.length === 2) {
-          year = "20" + year;
-        }
-
+        if (year.length === 2) year = "20" + year;
         const date = new Date(`${year}-${month}-${day}`);
-
         return isNaN(date) ? null : date;
       }
-
       return null;
     };
 
-    // =========================
-    // CLEAN + FORMAT DATA
-    // =========================
     const students = sheetData
       .map((row, index) => {
         const phone = row["Phone Number"]?.toString().trim();
-
-        // ❌ skip if phone missing
         if (!phone) {
           console.log(`❌ Missing phone at row ${index + 2}`);
           return null;
         }
-
         const admissionDate = parseExcelDate(row["Admission Date"]);
-
         if (!admissionDate) {
           console.log(`❌ Invalid date at row ${index + 2}`);
           return null;
         }
-
         return {
           facultyId: faculty._id,
           name: row["Student Name"]?.trim(),
@@ -482,48 +444,36 @@ export const insertStudentWithExcel = async (req, res) => {
       .filter(Boolean);
 
     if (!students.length) {
-      return res.status(400).json({
-        success: false,
-        message: "No valid students found",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "No valid students found" });
     }
 
-    // =========================
-    // INSERT STUDENTS
-    // =========================
     const insertedStudents = await Student.insertMany(students);
 
-    // =========================
-    // CREATE FEES
-    // =========================
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
-    const dueDate = new Date(year, month - 1, 7);
+    const status = getFeeStatus(month, year); // 👈 fixed — same status for all
 
-    const Fees = insertedStudents.map((student) => ({
+    const feeDocs = insertedStudents.map((student) => ({
       studentId: student._id,
       facultyId: student.facultyId,
       month,
       year,
       amount: student.monthlyFee,
-      dueDate,
-      status: "unpaid",
+      dueDate: new Date(year, month - 1, 7),
+      status, // 👈 fixed
     }));
 
-    await fees.insertMany(Fees);
+    await fees.insertMany(feeDocs);
 
-    return res.status(200).json({
-      success: true,
-      message: "Upload successful",
-    });
+    return res
+      .status(200)
+      .json({ success: true, message: "Upload successful" });
   } catch (error) {
-    console.log("❌ ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Upload failed",
-    });
+    console.error("❌ ERROR:", error);
+    return res.status(500).json({ success: false, message: "Upload failed" });
   }
 };
 
@@ -657,15 +607,57 @@ export const fetchFees = async (req, res) => {
     const { month, year } = req.body;
 
     const monthNum = Number(month);
-    const yearNum  = Number(year);
+    const yearNum = Number(year);
 
     if (!monthNum || !yearNum) {
-      return res.status(400).json({ success: false, message: "month and year are required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "month and year are required" });
     }
 
     const faculty = await Faculty.findOne({ clerkId });
     if (!faculty) {
-      return res.status(404).json({ success: false, message: "Faculty not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Faculty not found" });
+    }
+
+    const today = new Date();
+    const todayDate = today.getDate();
+    const todayMonth = today.getMonth() + 1;
+    const todayYear = today.getFullYear();
+
+    const isCurrentMonth = monthNum === todayMonth && yearNum === todayYear;
+    const isPastDeadline = todayDate > 7;
+
+    // =========================
+    // UPDATE UNPAID → NOT_PAID_ON_TIME (after 7th for current/past months)
+    // =========================
+
+    const isPastMonth =
+      yearNum < todayYear || (yearNum === todayYear && monthNum < todayMonth);
+
+    if ((isCurrentMonth && isPastDeadline) || isPastMonth) {
+      try {
+        const updated = await fees.updateMany(
+          {
+            facultyId: faculty._id,
+            month: monthNum,
+            year: yearNum,
+            status: "unpaid", // only update still-unpaid ones
+          },
+          { $set: { status: "not_paid_on_time" } },
+        );
+
+        if (updated.modifiedCount > 0) {
+          console.log(
+            `[fetchFees] Marked ${updated.modifiedCount} fees as not_paid_on_time`,
+          );
+        }
+      } catch (updateErr) {
+        // never block fee response
+        console.error("[fetchFees] Status update failed:", updateErr.message);
+      }
     }
 
     // =========================
@@ -675,8 +667,8 @@ export const fetchFees = async (req, res) => {
     let allfees = await fees
       .find({ facultyId: faculty._id, month: monthNum, year: yearNum })
       .populate({
-        path:   "studentId",
-        match:  { status: "active" },
+        path: "studentId",
+        match: { status: "active" },
         select: "name rollno course batch phone",
       })
       .sort({ createdAt: -1 });
@@ -688,24 +680,20 @@ export const fetchFees = async (req, res) => {
     // =========================
 
     const totalStudents = allfees.length;
-    const paidOnTime    = allfees.filter((f) => f.status === "paid_on_time").length;
-    const paidLate      = allfees.filter((f) => f.status === "paid_late").length;
-    const unpaid        = allfees.filter((f) => f.status === "unpaid").length;
-    const notPaidOnTime = allfees.filter((f) => f.status === "not_paid_on_time").length;
-    const totalUnpaid   = unpaid + notPaidOnTime;
+    const paidOnTime = allfees.filter(
+      (f) => f.status === "paid_on_time",
+    ).length;
+    const paidLate = allfees.filter((f) => f.status === "paid_late").length;
+    const unpaid = allfees.filter((f) => f.status === "unpaid").length;
+    const notPaidOnTime = allfees.filter(
+      (f) => f.status === "not_paid_on_time",
+    ).length;
+    const totalUnpaid = unpaid + notPaidOnTime;
 
     // =========================
     // POINTS CATCH-UP (if cron missed it after 8th)
     // only runs for current month — previous months are already settled
     // =========================
-
-    const today      = new Date();
-    const todayDate  = today.getDate();
-    const todayMonth = today.getMonth() + 1;
-    const todayYear  = today.getFullYear();
-
-    const isCurrentMonth = monthNum === todayMonth && yearNum === todayYear;
-    const isPastDeadline = todayDate > 7;
 
     let pointsAction = null;
 
@@ -713,35 +701,37 @@ export const fetchFees = async (req, res) => {
       try {
         const pointsDoc = await monthlyPoints.findOne({
           facultyId: faculty._id,
-          month:     monthNum,
-          year:      yearNum,
+          month: monthNum,
+          year: yearNum,
         });
 
-        // history entry is the source of truth — not totalPoints value
-        const alreadyDeducted = pointsDoc?.history.some(
-          (h) => h.reason === "Fee payment performance"
-        ) ?? false;
+        const alreadyDeducted =
+          pointsDoc?.history.some(
+            (h) => h.reason === "Fee payment performance",
+          ) ?? false;
 
         if (!alreadyDeducted) {
+          // not calculated yet — calculate now (cron missed it)
           const deductedPoints = Math.round((totalUnpaid / totalStudents) * 20);
 
           await monthlyPoints.findOneAndUpdate(
             { facultyId: faculty._id, month: monthNum, year: yearNum },
             {
-              $inc: { totalPoints: -deductedPoints }, // -0 is safe, no effect
+              $inc: { totalPoints: -deductedPoints },
               $push: {
                 history: {
-                  points:      -deductedPoints,
-                  type:        deductedPoints === 0 ? "reward" : "deduction",
-                  reason:      "Fee payment performance", // 👈 source of truth
-                  description: deductedPoints === 0
-                    ? `All ${totalStudents} students paid on time`
-                    : `${totalUnpaid}/${totalStudents} students unpaid (${Math.round((totalUnpaid / totalStudents) * 100)}%) — calculated on fetch`,
+                  points: -deductedPoints,
+                  type: deductedPoints === 0 ? "reward" : "deduction",
+                  reason: "Fee payment performance",
+                  description:
+                    deductedPoints === 0
+                      ? `All ${totalStudents} students paid on time`
+                      : `${totalUnpaid}/${totalStudents} students unpaid (${Math.round((totalUnpaid / totalStudents) * 100)}%) — calculated on fetch`,
                   createdAt: new Date(),
                 },
               },
             },
-            { upsert: true } // create doc if cron on 28th missed it
+            { upsert: true },
           );
 
           pointsAction = {
@@ -750,14 +740,67 @@ export const fetchFees = async (req, res) => {
             type: deductedPoints === 0 ? "reward" : "deduction",
           };
 
-          console.log(`[fetchFees] Points calculated for faculty ${faculty._id} — ${deductedPoints} pts deducted`);
+          console.log(
+            `[fetchFees] Points calculated for faculty ${faculty._id} — ${deductedPoints} pts deducted`,
+          );
         } else {
-          pointsAction = { calculated: false, reason: "already calculated by cron" };
+          // already calculated — check if new students were added after last calculation
+          const lastCalc = pointsDoc.history
+            .filter((h) => h.reason === "Fee payment performance")
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+
+          const newStudentsAdded = allfees.some(
+            (f) => new Date(f.createdAt) > new Date(lastCalc.createdAt),
+          );
+
+          if (newStudentsAdded) {
+            // recalculate diff only
+            const newDeductedPoints = Math.round(
+              (totalUnpaid / totalStudents) * 20,
+            );
+            const prevDeductedPoints = Math.abs(lastCalc.points);
+            const diff = newDeductedPoints - prevDeductedPoints;
+
+            if (diff !== 0) {
+              await monthlyPoints.findOneAndUpdate(
+                { facultyId: faculty._id, month: monthNum, year: yearNum },
+                {
+                  $inc: { totalPoints: -diff },
+                  $push: {
+                    history: {
+                      points: -diff,
+                      type: diff > 0 ? "deduction" : "reward",
+                      reason: "Fee payment performance",
+                      description: `Recalculated — ${totalUnpaid}/${totalStudents} unpaid after new students added`,
+                      createdAt: new Date(),
+                    },
+                  },
+                },
+              );
+              pointsAction = {
+                calculated: true,
+                deductedPoints: -diff,
+                type: "recalculated",
+              };
+              console.log(
+                `[fetchFees] Points recalculated for faculty ${faculty._id} — diff: ${diff}`,
+              );
+            } else {
+              pointsAction = {
+                calculated: false,
+                reason: "no point change after recalculation",
+              };
+            }
+          } else {
+            pointsAction = { calculated: false, reason: "already calculated" };
+          }
         }
       } catch (pointsErr) {
-        // points failure must never block fee response
         console.error("[fetchFees] Points catch-up failed:", pointsErr.message);
-        pointsAction = { calculated: false, reason: "points calculation failed" };
+        pointsAction = {
+          calculated: false,
+          reason: "points calculation failed",
+        };
       }
     }
 
@@ -765,8 +808,13 @@ export const fetchFees = async (req, res) => {
     // AVAILABLE MONTHS (for frontend month switcher)
     // =========================
 
-    const availableMonths = await fees.distinct("month", { facultyId: faculty._id, year: yearNum });
-    const availableYears  = await fees.distinct("year",  { facultyId: faculty._id });
+    const availableMonths = await fees.distinct("month", {
+      facultyId: faculty._id,
+      year: yearNum,
+    });
+    const availableYears = await fees.distinct("year", {
+      facultyId: faculty._id,
+    });
 
     res.json({
       success: true,
@@ -778,11 +826,9 @@ export const fetchFees = async (req, res) => {
         unpaid,
         notPaidOnTime,
       },
-      pointsAction,  // null = not current month or before 8th
-                     // { calculated: true, deductedPoints, type } = just calculated now
-                     // { calculated: false, reason } = already done or failed
+      pointsAction,
       availableMonths: availableMonths.sort((a, b) => a - b),
-      availableYears:  availableYears.sort((a, b) => a - b),
+      availableYears: availableYears.sort((a, b) => a - b),
     });
   } catch (error) {
     console.error(error);
