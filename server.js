@@ -7,28 +7,58 @@ import FacultyRouter from "./router/facultyRouter.js";
 import cron from "node-cron";
 import generateFees from "./utils/generateFees.js";
 import fees from "./model/fees.js";
-
+import Faculty from "./model/faculty.js"; // ✅ FIXED IMPORT
 
 dotenv.config();
 const app = express();
 
-app.use(cors({ origin: "https://faculty-dashboard-front.vercel.app", credentials: true }));
+// =========================
+// ✅ MIDDLEWARE
+// =========================
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    credentials: true,
+  })
+);
 app.use(express.json());
 
+// =========================
+// ✅ ROUTES
+// =========================
 app.get("/", (req, res) => {
-  res.send("Api is working");
+  res.send("API is working");
 });
 
 app.use("/api", studentRouter);
 app.use("/api", FacultyRouter);
 
+// =========================
+// 🔐 LOCK (PREVENT DOUBLE RUN)
+// =========================
+let isGenerating = false;
+
+const safeGenerateFees = async () => {
+  if (isGenerating) {
+    console.log("⚠️ Already running → skipped");
+    return;
+  }
+
+  try {
+    isGenerating = true;
+    await generateFees();
+  } finally {
+    isGenerating = false;
+  }
+};
+
+// =========================
+// 🚀 START SERVER
+// =========================
 const startServer = async () => {
   try {
-    // =========================
-    // ✅ CONNECT DB
-    // =========================
     await connectDb();
-    console.log("DB Connected");
+    console.log("✅ DB Connected");
 
     // =========================
     // 🔥 FALLBACK (MISSED CRON)
@@ -45,33 +75,42 @@ const startServer = async () => {
       const month = nextMonthDate.getMonth() + 1;
       const year = nextMonthDate.getFullYear();
 
-      const exists = await fees.findOne({ month, year });
+      const totalFaculties = await Faculty.countDocuments();
+      const totalEntries = await fees.countDocuments({ month, year });
 
-      if (!exists) {
-        console.log("[Startup] Missed cron → running now");
-        await generateFees();
+      if (totalEntries < totalFaculties) {
+        console.log("🔥 Missing entries → running fallback");
+        await safeGenerateFees();
       } else {
-        console.log("[Startup] Already generated → skip");
+        console.log("✅ All entries already exist");
       }
     }
 
     // =========================
-    // ✅ CRON
+    // ⏰ CRON JOB
     // =========================
-    cron.schedule("0 0 28 * *", generateFees, {
-      timezone: "Asia/Kolkata",
-    });
+    cron.schedule(
+      "0 0 28 * *",
+      async () => {
+        console.log("⏰ Cron triggered");
+        await safeGenerateFees();
+      },
+      {
+        timezone: "Asia/Kolkata",
+      }
+    );
 
     // =========================
-    // ✅ START SERVER
+    // 🌐 START SERVER
     // =========================
     const port = process.env.PORT || 3000;
 
     app.listen(port, () => {
-      console.log(`Server running on http://localhost:${port}`);
+      console.log(`🚀 Server running on http://localhost:${port}`);
     });
   } catch (error) {
-    console.error("Server start error:", error);
+    console.error("❌ Server start error:", error);
+    process.exit(1); // ✅ safer exit
   }
 };
 

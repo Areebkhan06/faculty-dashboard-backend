@@ -385,43 +385,77 @@ export const fetchAllStudents = async (req, res) => {
 };
 
 export const DeleteStudent = async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
+    session.startTransaction();
+
     const { id } = req.body;
     const userId = req.userId;
 
+    // =========================
+    // ✅ AUTH CHECK
+    // =========================
     if (!userId) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
         message: "Not authorised",
       });
     }
 
-    if (!id) {
+    // =========================
+    // ✅ VALIDATION
+    // =========================
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Student ID is required",
+        message: "Invalid student ID",
       });
     }
 
-    // Delete student
-    const student = await Student.findByIdAndDelete(id);
+    // =========================
+    // ✅ FIND STUDENT (WITH OWNER CHECK)
+    // =========================
+    const student = await Student.findOne({
+      _id: id,
+      // optional if you have relation:
+      // facultyId: userId
+    }).session(session);
 
     if (!student) {
+      await session.abortTransaction();
       return res.status(404).json({
         success: false,
         message: "Student not found",
       });
     }
 
-    // Delete all fees related to student
-    await fees.deleteMany({ studentId: id });
+    // =========================
+    // ✅ DELETE STUDENT
+    // =========================
+    await Student.deleteOne({ _id: id }).session(session);
+
+    // =========================
+    // ✅ DELETE RELATED FEES
+    // =========================
+    await fees.deleteMany({ studentId: id }).session(session);
+
+    // =========================
+    // ✅ COMMIT
+    // =========================
+    await session.commitTransaction();
+    session.endSession();
 
     res.json({
       success: true,
       message: "Student and related fees deleted successfully",
     });
+
   } catch (error) {
-    console.log(error);
+    await session.abortTransaction();
+    session.endSession();
+
+    console.error(error);
 
     res.status(500).json({
       success: false,

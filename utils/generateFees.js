@@ -1,90 +1,81 @@
-import fees from "../model/fees.js";
-import monthlyPoints from "../model/monthlyPoints.js";
 import Student from "../model/student.js";
+import fees from "../model/fees.js";
 
 const generateFees = async () => {
   try {
-    console.log("[Fee Cron] Running...", new Date());
-
+    // =========================
+    // ✅ NEXT MONTH ONLY
+    // =========================
     const now = new Date();
-    const nextMonthDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const nextMonthDate = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      1
+    );
 
     const month = nextMonthDate.getMonth() + 1;
     const year = nextMonthDate.getFullYear();
 
-    // 🔍 GLOBAL CHECK (FAST EXIT)
-    const alreadyExists = await fees.findOne({ month, year });
+    // =========================
+    // ✅ 1. GET ACTIVE STUDENTS
+    // =========================
+    const students = await Student.find(
+      { isActive: true }, // 🔥 ONLY ACTIVE STUDENTS
+      { _id: 1, facultyId: 1, feeAmount: 1 } // adjust field name if needed
+    );
 
-    if (alreadyExists) {
-      console.log("[Fee Cron] Already generated → skipping");
+    if (!students.length) {
+      console.log("⚠️ No active students found");
       return;
     }
 
-    const activeStudents = await Student.find({ status: "active" }).lean();
+    // =========================
+    // ✅ 2. EXISTING FEES
+    // =========================
+    const existingFees = await fees.find(
+      { month, year },
+      { studentId: 1 }
+    );
 
-    if (!activeStudents.length) {
-      console.log("[Fee Cron] No active students");
-      return;
-    }
-
-    const feeOps = activeStudents.map((student) => ({
-      updateOne: {
-        filter: {
-          studentId: student._id,
-          month,
-          year,
-        },
-        update: {
-          $setOnInsert: {
-            studentId: student._id,
-            facultyId: student.facultyId,
-            amount: student.monthlyFee,
-            month,
-            year,
-            status: "unpaid",
-          },
-        },
-        upsert: true, // 🔥 prevents duplicates
-      },
-    }));
-
-    const result = await fees.bulkWrite(feeOps);
-
-    console.log(
-      `[Fee Cron] Created: ${result.upsertedCount}, Skipped duplicates automatically`,
+    const existingIds = new Set(
+      existingFees.map(f => f.studentId.toString())
     );
 
     // =========================
-    // POINTS INIT (SAFE)
+    // ✅ 3. CREATE ENTRIES
     // =========================
+    const newEntries = students
+      .filter(s => !existingIds.has(s._id.toString()))
+      .map(s => ({
+        studentId: s._id,
+        facultyId: s.facultyId,
 
-    const facultyIds = [
-      ...new Set(activeStudents.map((s) => s.facultyId).filter(Boolean)),
-    ];
+        month,
+        year,
 
-    const pointOps = facultyIds.map((fId) => ({
-      updateOne: {
-        filter: { facultyId: fId, month, year },
-        update: {
-          $setOnInsert: {
-            facultyId: fId,
-            month,
-            year,
-            totalPoints: 0,
-            history: [],
-          },
-        },
-        upsert: true,
-      },
-    }));
+        amount: s.feeAmount || 0, // 💰 from student
 
-    await monthlyPoints.bulkWrite(pointOps);
+        status: "unpaid",
+        transferStatus: "none",
 
-    console.log("[Fee Cron] Points initialized");
+        dueDate: new Date(year, month - 1, 7), // 📅 10th of month
+        lateDays: 0,
+      }));
+
+    // =========================
+    // ✅ 4. BULK INSERT
+    // =========================
+    if (newEntries.length > 0) {
+      await fees.insertMany(newEntries, { ordered: false });
+      console.log(`✅ ${newEntries.length} student fees created`);
+    } else {
+      console.log("✅ All student fees already exist");
+    }
+
   } catch (err) {
-    console.error("[Fee Cron] Error:", err.message);
+    console.log("❌ Error:", err.message);
   }
 };
-
 
 export default generateFees;
