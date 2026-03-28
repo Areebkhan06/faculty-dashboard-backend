@@ -6,132 +6,6 @@ import fs from "fs";
 import cron from "node-cron";
 import monthlyPoints from "../model/monthlyPoints.js";
 
-cron.schedule("0 0 28 * *", async () => {
-  console.log("[Fee Cron] Generating next month fees + points...");
-  try {
-    const nextMonth = new Date();
-    nextMonth.setMonth(nextMonth.getMonth() + 1);
-
-    const month = nextMonth.getMonth() + 1;
-    const year = nextMonth.getFullYear();
-
-    console.log(`[Fee Cron] Target: ${month}/${year}`);
-
-    // ── 1. Fetch active students ──────────────────────────────────────────
-    const activeStudents = await Student.find({ status: "active" }).lean();
-
-    if (activeStudents.length === 0) {
-      console.log("[Fee Cron] No active students found. Exiting.");
-      return;
-    }
-
-    console.log(`[Fee Cron] Found ${activeStudents.length} active students.`);
-
-    // ── 2. Create fee entries one by one (safer than batch for logging) ───
-    let feeCreated = 0;
-    let feeSkipped = 0;
-    let feeFailed = 0;
-
-    for (const student of activeStudents) {
-      try {
-        // skip if student is missing required fields
-        if (!student._id || !student.facultyId || !student.monthlyFee) {
-          console.warn(
-            `[Fee Cron] Skipping student ${student._id} — missing facultyId or monthlyFee`,
-          );
-          feeSkipped++;
-          continue;
-        }
-
-        // check if fee already exists (safety against double run)
-        const exists = await fees.exists({
-          studentId: student._id,
-          month,
-          year,
-        });
-
-        if (exists) {
-          feeSkipped++;
-          continue;
-        }
-
-        await fees.create({
-          studentId: student._id,
-          facultyId: student.facultyId,
-          amount: student.monthlyFee,
-          month,
-          year,
-          status: "unpaid",
-        });
-
-        feeCreated++;
-      } catch (err) {
-        feeFailed++;
-        console.error(
-          `[Fee Cron] Failed for student ${student._id}:`,
-          err.message,
-        );
-      }
-    }
-
-    console.log(
-      `[Fee Cron] Fees — created: ${feeCreated}, skipped: ${feeSkipped}, failed: ${feeFailed}`,
-    );
-
-    // ── 3. Get unique valid facultyIds ────────────────────────────────────
-    const facultyIds = [
-      ...new Set(
-        activeStudents.map((s) => s.facultyId?.toString()).filter(Boolean),
-      ),
-    ];
-
-    if (facultyIds.length === 0) {
-      console.warn("[Fee Cron] No valid facultyIds found.");
-      return;
-    }
-
-    // ── 4. Create monthly points docs one by one ──────────────────────────
-    let pointsCreated = 0;
-    let pointsSkipped = 0;
-    let pointsFailed = 0;
-
-    for (const facultyId of facultyIds) {
-      try {
-        // check if already exists (safety against double run)
-        const exists = await monthlyPoints.exists({ facultyId, month, year });
-
-        if (exists) {
-          pointsSkipped++;
-          continue;
-        }
-
-        await monthlyPoints.create({
-          facultyId,
-          month,
-          year,
-          totalPoints: 0,
-          history: [],
-        });
-
-        pointsCreated++;
-      } catch (err) {
-        pointsFailed++;
-        console.error(
-          `[Fee Cron] Failed points for faculty ${facultyId}:`,
-          err.message,
-        );
-      }
-    }
-
-    console.log(
-      `[Points Cron] Points — created: ${pointsCreated}, skipped: ${pointsSkipped}, failed: ${pointsFailed}`,
-    );
-    console.log("[Fee Cron] Done.");
-  } catch (err) {
-    console.error("[Fee Cron] Fatal error:", err.message);
-  }
-});
-
 // ─── JOB 2: On 8th of every month — mark unpaid → not_paid_on_time + deduct points ──
 cron.schedule("0 1 8 * *", async () => {
   console.log("[Points Cron] Processing overdue fees...");
@@ -610,16 +484,18 @@ export const fetchFees = async (req, res) => {
     const yearNum = Number(year);
 
     if (!monthNum || !yearNum) {
-      return res
-        .status(400)
-        .json({ success: false, message: "month and year are required" });
+      return res.status(400).json({
+        success: false,
+        message: "month and year are required",
+      });
     }
 
     const faculty = await Faculty.findOne({ clerkId });
     if (!faculty) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Faculty not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Faculty not found",
+      });
     }
 
     const today = new Date();
@@ -630,42 +506,90 @@ export const fetchFees = async (req, res) => {
     const isCurrentMonth = monthNum === todayMonth && yearNum === todayYear;
     const isPastDeadline = todayDate > 7;
 
-    // =========================
-    // UPDATE UNPAID → NOT_PAID_ON_TIME (after 7th for current/past months)
-    // =========================
-
     const isPastMonth =
-      yearNum < todayYear || (yearNum === todayYear && monthNum < todayMonth);
+      yearNum < todayYear ||
+      (yearNum === todayYear && monthNum < todayMonth);
+
+    // =====================================================
+    // 🔥 AUTO FIX MISSING FEES (BEST LOGIC)
+    // =====================================================
+
+    const studentCount = await Student.countDocuments({
+      facultyId: faculty._id,
+      status: "active",
+    });
+
+    const feeCount = await fees.countDocuments({
+      facultyId: faculty._id,
+      month: monthNum,
+      year: yearNum,
+    });
+
+    if (feeCount < studentCount) {
+      console.log("[fetchFees] Missing fees → fixing...");
+
+      const students = await Student.find({
+        facultyId: faculty._id,
+        status: "active",
+      });
+
+      const feeOps = students.map((s) => ({
+        updateOne: {
+          filter: {
+            studentId: s._id,
+            month: monthNum,
+            year: yearNum,
+          },
+          update: {
+            $setOnInsert: {
+              studentId: s._id,
+              facultyId: s.facultyId,
+              amount: s.monthlyFee,
+              month: monthNum,
+              year: yearNum,
+              status: "unpaid",
+              dueDate: new Date(yearNum, monthNum - 1, 7),
+            },
+          },
+          upsert: true, // 🔥 prevents duplicates
+        },
+      }));
+
+      await fees.bulkWrite(feeOps);
+
+      console.log("[fetchFees] Missing fees fixed");
+    }
+
+    // =====================================================
+    // 🔥 UPDATE STATUS (AFTER DEADLINE)
+    // =====================================================
 
     if ((isCurrentMonth && isPastDeadline) || isPastMonth) {
       try {
-        const updated = await fees.updateMany(
+        await fees.updateMany(
           {
             facultyId: faculty._id,
             month: monthNum,
             year: yearNum,
-            status: "unpaid", // only update still-unpaid ones
+            status: "unpaid",
           },
-          { $set: { status: "not_paid_on_time" } },
+          { $set: { status: "not_paid_on_time" } }
         );
-
-        if (updated.modifiedCount > 0) {
-          console.log(
-            `[fetchFees] Marked ${updated.modifiedCount} fees as not_paid_on_time`,
-          );
-        }
-      } catch (updateErr) {
-        // never block fee response
-        console.error("[fetchFees] Status update failed:", updateErr.message);
+      } catch (err) {
+        console.error("[fetchFees] Status update failed:", err.message);
       }
     }
 
-    // =========================
-    // FETCH FEES FOR GIVEN MONTH/YEAR
-    // =========================
+    // =====================================================
+    // 🔥 FETCH DATA
+    // =====================================================
 
     let allfees = await fees
-      .find({ facultyId: faculty._id, month: monthNum, year: yearNum })
+      .find({
+        facultyId: faculty._id,
+        month: monthNum,
+        year: yearNum,
+      })
       .populate({
         path: "studentId",
         match: { status: "active" },
@@ -673,27 +597,35 @@ export const fetchFees = async (req, res) => {
       })
       .sort({ createdAt: -1 });
 
-    allfees = allfees.filter((fee) => fee.studentId !== null);
+    allfees = allfees.filter((f) => f.studentId);
 
-    // =========================
-    // BASIC STATS
-    // =========================
+    // =====================================================
+    // 🔥 STATS
+    // =====================================================
 
     const totalStudents = allfees.length;
+
     const paidOnTime = allfees.filter(
-      (f) => f.status === "paid_on_time",
+      (f) => f.status === "paid_on_time"
     ).length;
-    const paidLate = allfees.filter((f) => f.status === "paid_late").length;
-    const unpaid = allfees.filter((f) => f.status === "unpaid").length;
+
+    const paidLate = allfees.filter(
+      (f) => f.status === "paid_late"
+    ).length;
+
+    const unpaid = allfees.filter(
+      (f) => f.status === "unpaid"
+    ).length;
+
     const notPaidOnTime = allfees.filter(
-      (f) => f.status === "not_paid_on_time",
+      (f) => f.status === "not_paid_on_time"
     ).length;
+
     const totalUnpaid = unpaid + notPaidOnTime;
 
-    // =========================
-    // POINTS CATCH-UP (if cron missed it after 8th)
-    // only runs for current month — previous months are already settled
-    // =========================
+    // =====================================================
+    // 🔥 POINTS SYSTEM (SAFE)
+    // =====================================================
 
     let pointsAction = null;
 
@@ -705,116 +637,72 @@ export const fetchFees = async (req, res) => {
           year: yearNum,
         });
 
-        const alreadyDeducted =
-          pointsDoc?.history.some(
-            (h) => h.reason === "Fee payment performance",
+        const alreadyCalculated =
+          pointsDoc?.history?.some(
+            (h) => h.reason === "Fee payment performance"
           ) ?? false;
 
-        if (!alreadyDeducted) {
-          // not calculated yet — calculate now (cron missed it)
-          const deductedPoints = Math.round((totalUnpaid / totalStudents) * 20);
+        if (!alreadyCalculated) {
+          const deductedPoints = Math.round(
+            (totalUnpaid / totalStudents) * 20
+          );
 
           await monthlyPoints.findOneAndUpdate(
-            { facultyId: faculty._id, month: monthNum, year: yearNum },
+            {
+              facultyId: faculty._id,
+              month: monthNum,
+              year: yearNum,
+            },
             {
               $inc: { totalPoints: -deductedPoints },
               $push: {
                 history: {
                   points: -deductedPoints,
-                  type: deductedPoints === 0 ? "reward" : "deduction",
+                  type:
+                    deductedPoints === 0 ? "reward" : "deduction",
                   reason: "Fee payment performance",
                   description:
                     deductedPoints === 0
                       ? `All ${totalStudents} students paid on time`
-                      : `${totalUnpaid}/${totalStudents} students unpaid (${Math.round((totalUnpaid / totalStudents) * 100)}%) — calculated on fetch`,
+                      : `${totalUnpaid}/${totalStudents} unpaid`,
                   createdAt: new Date(),
                 },
               },
             },
-            { upsert: true },
+            { upsert: true }
           );
 
           pointsAction = {
             calculated: true,
             deductedPoints: -deductedPoints,
-            type: deductedPoints === 0 ? "reward" : "deduction",
           };
-
-          console.log(
-            `[fetchFees] Points calculated for faculty ${faculty._id} — ${deductedPoints} pts deducted`,
-          );
         } else {
-          // already calculated — check if new students were added after last calculation
-          const lastCalc = pointsDoc.history
-            .filter((h) => h.reason === "Fee payment performance")
-            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
-
-          const newStudentsAdded = allfees.some(
-            (f) => new Date(f.createdAt) > new Date(lastCalc.createdAt),
-          );
-
-          if (newStudentsAdded) {
-            // recalculate diff only
-            const newDeductedPoints = Math.round(
-              (totalUnpaid / totalStudents) * 20,
-            );
-            const prevDeductedPoints = Math.abs(lastCalc.points);
-            const diff = newDeductedPoints - prevDeductedPoints;
-
-            if (diff !== 0) {
-              await monthlyPoints.findOneAndUpdate(
-                { facultyId: faculty._id, month: monthNum, year: yearNum },
-                {
-                  $inc: { totalPoints: -diff },
-                  $push: {
-                    history: {
-                      points: -diff,
-                      type: diff > 0 ? "deduction" : "reward",
-                      reason: "Fee payment performance",
-                      description: `Recalculated — ${totalUnpaid}/${totalStudents} unpaid after new students added`,
-                      createdAt: new Date(),
-                    },
-                  },
-                },
-              );
-              pointsAction = {
-                calculated: true,
-                deductedPoints: -diff,
-                type: "recalculated",
-              };
-              console.log(
-                `[fetchFees] Points recalculated for faculty ${faculty._id} — diff: ${diff}`,
-              );
-            } else {
-              pointsAction = {
-                calculated: false,
-                reason: "no point change after recalculation",
-              };
-            }
-          } else {
-            pointsAction = { calculated: false, reason: "already calculated" };
-          }
+          pointsAction = {
+            calculated: false,
+            reason: "already calculated",
+          };
         }
-      } catch (pointsErr) {
-        console.error("[fetchFees] Points catch-up failed:", pointsErr.message);
-        pointsAction = {
-          calculated: false,
-          reason: "points calculation failed",
-        };
+      } catch (err) {
+        console.error("[fetchFees] Points error:", err.message);
       }
     }
 
-    // =========================
-    // AVAILABLE MONTHS (for frontend month switcher)
-    // =========================
+    // =====================================================
+    // 🔥 AVAILABLE MONTHS / YEARS
+    // =====================================================
 
     const availableMonths = await fees.distinct("month", {
       facultyId: faculty._id,
       year: yearNum,
     });
+
     const availableYears = await fees.distinct("year", {
       facultyId: faculty._id,
     });
+
+    // =====================================================
+    // ✅ RESPONSE
+    // =====================================================
 
     res.json({
       success: true,
@@ -832,7 +720,10 @@ export const fetchFees = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 };
 // controllers/feeController.js — markFeePaid

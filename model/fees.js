@@ -53,7 +53,7 @@ const feeSchema = new mongoose.Schema(
     },
 
     dueDate: {
-      type: Date,
+      type: Date, 
       required: true,
     },
 
@@ -68,5 +68,12 @@ const feeSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// 🔥 CRITICAL: Prevent duplicate fees
+feeSchema.index(
+  { studentId: 1, month: 1, year: 1 },
+  { unique: true }
+);
+
 
 export default mongoose.models.Fee || mongoose.model("Fee", feeSchema);

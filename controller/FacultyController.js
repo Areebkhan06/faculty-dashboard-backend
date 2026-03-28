@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+import Activity from "../model/activity.js";
 import Faculty from "../model/faculty.js";
 import fees from "../model/fees.js";
 import transferRequest from "../model/transferRequest.js";
@@ -85,12 +87,30 @@ export const sendTransferRequest = async (req, res) => {
       note,
     } = req.body;
 
-    if (!feeId)       return res.status(400).json({ success: false, message: "feeId is required" });
-    if (!studentId)   return res.status(400).json({ success: false, message: "studentId is required" });
-    if (!fromFaculty) return res.status(400).json({ success: false, message: "fromFaculty is required" });
-    if (!toFaculty)   return res.status(400).json({ success: false, message: "toFaculty is required" });
-    if (!batchTiming) return res.status(400).json({ success: false, message: "batchTiming is required" });
-    if (!days)        return res.status(400).json({ success: false, message: "days is required" });
+    if (!feeId)
+      return res
+        .status(400)
+        .json({ success: false, message: "feeId is required" });
+    if (!studentId)
+      return res
+        .status(400)
+        .json({ success: false, message: "studentId is required" });
+    if (!fromFaculty)
+      return res
+        .status(400)
+        .json({ success: false, message: "fromFaculty is required" });
+    if (!toFaculty)
+      return res
+        .status(400)
+        .json({ success: false, message: "toFaculty is required" });
+    if (!batchTiming)
+      return res
+        .status(400)
+        .json({ success: false, message: "batchTiming is required" });
+    if (!days)
+      return res
+        .status(400)
+        .json({ success: false, message: "days is required" });
 
     const request = await transferRequest.create({
       feeId,
@@ -103,10 +123,15 @@ export const sendTransferRequest = async (req, res) => {
       note,
     });
 
-    const updatedFee = await fees.findByIdAndUpdate(feeId, { transferStatus: "pending" });
-    if (!updatedFee) return res.status(404).json({ success: false, message: "Fee not found" });
+    const updatedFee = await fees.findByIdAndUpdate(feeId, {
+      transferStatus: "pending",
+    });
+    if (!updatedFee)
+      return res.status(404).json({ success: false, message: "Fee not found" });
 
-    res.status(201).json({ success: true, message: "Transfer request sent", data: request });
+    res
+      .status(201)
+      .json({ success: true, message: "Transfer request sent", data: request });
   } catch (err) {
     console.error("sendTransferRequest error →", err.message);
     res.status(500).json({ success: false, message: err.message });
@@ -118,19 +143,20 @@ export const fetchRequest = async (req, res) => {
     const clerkId = req.userId;
 
     const faculty = await Faculty.findOne({ clerkId });
-    if (!faculty) return res.status(404).json({ success: false, message: "Faculty not found" });
-console.log("faculty",faculty);
+    if (!faculty)
+      return res
+        .status(404)
+        .json({ success: false, message: "Faculty not found" });
+    console.log("faculty", faculty);
 
     const requests = await transferRequest
       .find({ toFaculty: faculty._id, status: "pending" })
-      .populate("studentId",   "name email phoneNumber")
+      .populate("studentId", "name email phoneNumber")
       .populate("fromFaculty", "name department")
-      .populate("feeId",       "amount month year")
+      .populate("feeId", "amount month year")
       .sort({ createdAt: -1 });
 
-
-     console.log(requests);
-      
+    console.log(requests);
 
     res.status(200).json({
       success: true,
@@ -141,5 +167,115 @@ console.log("faculty",faculty);
   } catch (err) {
     console.error("fetchRequest error →", err.message);
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const AddActivity = async (req, res) => {
+  try {
+    const { title, description, category, status, date } = req.body;
+
+    // ✅ validation
+    if (!title || !category || !date) {
+      return res.status(400).json({
+        success: false,
+        message: "Title, Category and Date are required",
+      });
+    }
+
+    const clerkId = req.userId;
+
+    // ✅ find faculty
+    const faculty = await Faculty.findOne({ clerkId });
+    if (!faculty) {
+      return res.status(404).json({
+        success: false,
+        message: "Faculty not found",
+      });
+    }
+
+    // ✅ create activity
+    const newActivity = new Activity({
+      facultyId: faculty._id, // 🔥 correct mapping
+      title,
+      description,
+      category: category.toLowerCase(),
+      status: status || "pending",
+      date,
+    });
+
+    // ✅ auto completedAt
+    if (status === "completed") {
+      newActivity.completedAt = new Date();
+    }
+
+    await newActivity.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Activity added successfully",
+      data: newActivity,
+    });
+  } catch (error) {
+    console.log(error.message);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+export const fetchActivity = async (req, res) => {
+  try {
+    const clerkId = req.userId;
+
+    // =========================
+    // ✅ FIND FACULTY
+    // =========================
+    const faculty = await Faculty.findOne({ clerkId });
+
+    if (!faculty) {
+      return res.status(404).json({
+        success: false,
+        message: "Faculty not found",
+      });
+    }
+
+    // =========================
+    // ✅ FETCH ALL ACTIVITIES (LATEST FIRST)
+    // =========================
+    const activities = await Activity.find({
+      facultyId: faculty._id,
+    }).sort({ createdAt: -1, _id: -1 }); // 🔥 latest first
+
+    // =========================
+    // ✅ STATS (OPTIONAL)
+    // =========================
+    const totalActivities = activities.length;
+
+    const completedActivities = activities.filter(
+      (a) => a.status === "completed"
+    ).length;
+
+    const pendingActivities = activities.filter(
+      (a) => a.status === "pending"
+    ).length;
+
+    // =========================
+    // ✅ RESPONSE
+    // =========================
+    res.json({
+      success: true,
+      activities,
+      stats: {
+        totalActivities,
+        completedActivities,
+        pendingActivities,
+      },
+    });
+  } catch (error) {
+    console.error("[fetchActivity] Error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 };
