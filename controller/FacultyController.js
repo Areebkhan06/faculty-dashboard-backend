@@ -3,6 +3,7 @@ import Activity from "../model/activity.js";
 import Faculty from "../model/faculty.js";
 import fees from "../model/fees.js";
 import transferRequest from "../model/transferRequest.js";
+import monthlyPoints from "../model/monthlyPoints.js";
 
 export const RegisterFaculty = async (req, res) => {
   try {
@@ -252,11 +253,11 @@ export const fetchActivity = async (req, res) => {
     const totalActivities = activities.length;
 
     const completedActivities = activities.filter(
-      (a) => a.status === "completed"
+      (a) => a.status === "completed",
     ).length;
 
     const pendingActivities = activities.filter(
-      (a) => a.status === "pending"
+      (a) => a.status === "pending",
     ).length;
 
     // =========================
@@ -276,6 +277,109 @@ export const fetchActivity = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
+    });
+  }
+};
+
+export const markActivityComplete = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { activityId } = req.body;
+    const clerkId = req.userId;
+
+    // ✅ Validate
+    if (!clerkId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    if (!activityId) {
+      return res.status(400).json({
+        success: false,
+        message: "Activity ID required",
+      });
+    }
+
+    // ✅ 1. Find Faculty using Clerk ID
+    const faculty = await Faculty.findOne({ clerkId }).session(session);
+
+    if (!faculty) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: "Faculty not found",
+      });
+    }
+
+    const facultyId = faculty._id; // ✅ Mongo ObjectId
+
+    // ✅ 2. Update Activity
+    const activity = await Activity.findOneAndReplace(
+      { _id: activityId, facultyId: facultyId, status: "pending" },
+      { status: "completed", completedAt: new Date() },
+      { new: true, session },
+    );
+
+    if (!activity) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: "Activity not found or already completed",
+      });
+    }
+
+    // ✅ 3. Month-Year (UTC safe)
+    const now = new Date();
+    const currentMonth = now.getUTCMonth() + 1;
+    const currentYear = now.getUTCFullYear();
+
+    const rewardPoints = 10;
+
+    // ✅ 4. Update Monthly Points
+    const pointsnew = await monthlyPoints.findOneAndUpdate(
+      { facultyId: facultyId, month: currentMonth, year: currentYear },
+      {
+        $inc: { totalPoints: rewardPoints },
+        $push: {
+          history: {
+            points: rewardPoints,
+            type: "reward",
+            reason: `Completed: ${activity.title}`,
+            date: new Date(),
+          },
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        session,
+      },
+    );
+
+    // ✅ Commit Transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json({
+      success: true,
+      message: "Activity completed and 10 points awarded!",
+      activity,
+      points: pointsnew,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    console.error("Points Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error updating points",
     });
   }
 };

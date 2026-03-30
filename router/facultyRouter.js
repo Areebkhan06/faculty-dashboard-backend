@@ -1,9 +1,10 @@
 import express from "express";
 import {
-    AddActivity,
+  AddActivity,
   checkProfileCompleted,
   fetchActivity,
   fetchRequest,
+  markActivityComplete,
   RegisterFaculty,
   sendTransferRequest,
 } from "../controller/FacultyController.js";
@@ -18,5 +19,6 @@ FacultyRouter.post("/transfer-request", requireAuth, sendTransferRequest);
 FacultyRouter.post("/get-request", requireAuth, fetchRequest);
 FacultyRouter.post("/add-activity", requireAuth, AddActivity);
 FacultyRouter.get("/fetch-activity", requireAuth, fetchActivity);
+FacultyRouter.post("/mark-complete-activity", requireAuth, markActivityComplete);
 
 export default FacultyRouter;
