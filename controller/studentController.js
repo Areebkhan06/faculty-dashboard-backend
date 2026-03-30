@@ -450,7 +450,6 @@ export const DeleteStudent = async (req, res) => {
       success: true,
       message: "Student and related fees deleted successfully",
     });
-
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
@@ -541,8 +540,7 @@ export const fetchFees = async (req, res) => {
     const isPastDeadline = todayDate > 7;
 
     const isPastMonth =
-      yearNum < todayYear ||
-      (yearNum === todayYear && monthNum < todayMonth);
+      yearNum < todayYear || (yearNum === todayYear && monthNum < todayMonth);
 
     // =====================================================
     // 🔥 AUTO FIX MISSING FEES (BEST LOGIC)
@@ -607,7 +605,7 @@ export const fetchFees = async (req, res) => {
             year: yearNum,
             status: "unpaid",
           },
-          { $set: { status: "not_paid_on_time" } }
+          { $set: { status: "not_paid_on_time" } },
         );
       } catch (err) {
         console.error("[fetchFees] Status update failed:", err.message);
@@ -640,19 +638,15 @@ export const fetchFees = async (req, res) => {
     const totalStudents = allfees.length;
 
     const paidOnTime = allfees.filter(
-      (f) => f.status === "paid_on_time"
+      (f) => f.status === "paid_on_time",
     ).length;
 
-    const paidLate = allfees.filter(
-      (f) => f.status === "paid_late"
-    ).length;
+    const paidLate = allfees.filter((f) => f.status === "paid_late").length;
 
-    const unpaid = allfees.filter(
-      (f) => f.status === "unpaid"
-    ).length;
+    const unpaid = allfees.filter((f) => f.status === "unpaid").length;
 
     const notPaidOnTime = allfees.filter(
-      (f) => f.status === "not_paid_on_time"
+      (f) => f.status === "not_paid_on_time",
     ).length;
 
     const totalUnpaid = unpaid + notPaidOnTime;
@@ -673,13 +667,11 @@ export const fetchFees = async (req, res) => {
 
         const alreadyCalculated =
           pointsDoc?.history?.some(
-            (h) => h.reason === "Fee payment performance"
+            (h) => h.reason === "Fee payment performance",
           ) ?? false;
 
         if (!alreadyCalculated) {
-          const deductedPoints = Math.round(
-            (totalUnpaid / totalStudents) * 20
-          );
+          const deductedPoints = Math.round((totalUnpaid / totalStudents) * 20);
 
           await monthlyPoints.findOneAndUpdate(
             {
@@ -692,8 +684,7 @@ export const fetchFees = async (req, res) => {
               $push: {
                 history: {
                   points: -deductedPoints,
-                  type:
-                    deductedPoints === 0 ? "reward" : "deduction",
+                  type: deductedPoints === 0 ? "reward" : "deduction",
                   reason: "Fee payment performance",
                   description:
                     deductedPoints === 0
@@ -703,7 +694,7 @@ export const fetchFees = async (req, res) => {
                 },
               },
             },
-            { upsert: true }
+            { upsert: true },
           );
 
           pointsAction = {
@@ -764,24 +755,131 @@ export const fetchFees = async (req, res) => {
 export const markFeePaid = async (req, res) => {
   try {
     const { feeId } = req.body;
+    const clerkId = req.userId;
 
+    if (!clerkId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // ✅ Get faculty
+    const faculty = await Faculty.findOne({ clerkId });
+    if (!faculty) {
+      return res.status(404).json({
+        success: false,
+        message: "Faculty not found",
+      });
+    }
+
+    const facultyId = faculty._id;
+
+    // ✅ Get fee
     const fee = await fees.findById(feeId);
-    if (!fee)
-      return res.status(404).json({ success: false, message: "Fee not found" });
+    if (!fee) {
+      return res.status(404).json({
+        success: false,
+        message: "Fee not found",
+      });
+    }
 
+    // ❌ Prevent duplicate payment
+    if (fee.status === "paid_on_time" || fee.status === "paid_late") {
+      return res.status(400).json({
+        success: false,
+        message: "Fee already marked paid",
+      });
+    }
+
+    // ======================
+    // ✅ DATE LOGIC
+    // ======================
     const today = new Date();
+
+    const currentDay = today.getDate();
+    const currentMonth = today.getMonth() + 1;
+    const currentYear = today.getFullYear();
+
+    const isSameMonth =
+      currentMonth === fee.month && currentYear === fee.year;
+
+    const isBeforeDueDate = currentDay <= 7;
+
+    const isPreviousMonth =
+      (currentYear === fee.year && currentMonth === fee.month - 1) ||
+      (fee.month === 1 &&
+        currentMonth === 12 &&
+        currentYear === fee.year - 1);
+
     const paidOnTime =
-      today.getDate() <= 7 &&
-      today.getMonth() + 1 === fee.month &&
-      today.getFullYear() === fee.year;
+      (isSameMonth && isBeforeDueDate) || isPreviousMonth;
 
     fee.status = paidOnTime ? "paid_on_time" : "paid_late";
     fee.paidAt = today;
+
     await fee.save();
 
-    res.json({ success: true, fee });
+    // ======================
+    // 🎯 FAIR INCREMENT SYSTEM
+    // ======================
+
+    let pointsData = null;
+
+    if (paidOnTime) {
+      const MAX_POINTS = 50;
+
+      // total students
+      const totalStudents = await Student.countDocuments({ facultyId });
+
+      const perStudentPoint =
+        totalStudents > 0 ? MAX_POINTS / totalStudents : 0;
+
+      // ✅ ALWAYS USE CURRENT MONTH
+      const pointsMonth = today.getUTCMonth() + 1;
+      const pointsYear = today.getUTCFullYear();
+
+      pointsData = await monthlyPoints.findOneAndUpdate(
+        {
+          facultyId,
+          month: pointsMonth, // ✅ FIXED
+          year: pointsYear,   // ✅ FIXED
+        },
+        {
+          $inc: { totalPoints: perStudentPoint },
+          $push: {
+            history: {
+              points: perStudentPoint,
+              type: "reward",
+              reason: `Fee paid on time (${fee.month}/${fee.year})`,
+              date: new Date(),
+            },
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        }
+      );
+    }
+
+    res.json({
+      success: true,
+      fee,
+      points: pointsData,
+      message: paidOnTime
+        ? "Fee paid on time + points added to current month 🎉"
+        : "Fee paid late (no points)",
+    });
+
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error("Fee Error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 
