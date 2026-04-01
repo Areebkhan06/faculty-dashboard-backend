@@ -4,10 +4,6 @@ import cors from "cors";
 import connectDb from "./config/database.js";
 import studentRouter from "./router/studentRouter.js";
 import FacultyRouter from "./router/facultyRouter.js";
-import cron from "node-cron";
-import generateFees from "./utils/generateFees.js";
-import fees from "./model/fees.js";
-import Faculty from "./model/faculty.js"; // ✅ FIXED IMPORT
 
 dotenv.config();
 const app = express();
@@ -21,6 +17,7 @@ app.use(
     credentials: true,
   })
 );
+
 app.use(express.json());
 
 // =========================
@@ -34,25 +31,6 @@ app.use("/api", studentRouter);
 app.use("/api", FacultyRouter);
 
 // =========================
-// 🔐 LOCK (PREVENT DOUBLE RUN)
-// =========================
-let isGenerating = false;
-
-const safeGenerateFees = async () => {
-  if (isGenerating) {
-    console.log("⚠️ Already running → skipped");
-    return;
-  }
-
-  try {
-    isGenerating = true;
-    await generateFees();
-  } finally {
-    isGenerating = false;
-  }
-};
-
-// =========================
 // 🚀 START SERVER
 // =========================
 const startServer = async () => {
@@ -60,49 +38,6 @@ const startServer = async () => {
     await connectDb();
     console.log("✅ DB Connected");
 
-    // =========================
-    // 🔥 FALLBACK (MISSED CRON)
-    // =========================
-    const today = new Date();
-
-    if (today.getDate() >= 28) {
-      const nextMonthDate = new Date(
-        today.getFullYear(),
-        today.getMonth() + 1,
-        1
-      );
-
-      const month = nextMonthDate.getMonth() + 1;
-      const year = nextMonthDate.getFullYear();
-
-      const totalFaculties = await Faculty.countDocuments();
-      const totalEntries = await fees.countDocuments({ month, year });
-
-      if (totalEntries < totalFaculties) {
-        console.log("🔥 Missing entries → running fallback");
-        await safeGenerateFees();
-      } else {
-        console.log("✅ All entries already exist");
-      }
-    }
-
-    // =========================
-    // ⏰ CRON JOB
-    // =========================
-    cron.schedule(
-      "0 0 28 * *",
-      async () => {
-        console.log("⏰ Cron triggered");
-        await safeGenerateFees();
-      },
-      {
-        timezone: "Asia/Kolkata",
-      }
-    );
-
-    // =========================
-    // 🌐 START SERVER
-    // =========================
     const port = process.env.PORT || 3000;
 
     app.listen(port, () => {
@@ -110,7 +45,7 @@ const startServer = async () => {
     });
   } catch (error) {
     console.error("❌ Server start error:", error);
-    process.exit(1); // ✅ safer exit
+    process.exit(1);
   }
 };
 
