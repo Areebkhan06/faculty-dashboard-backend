@@ -528,11 +528,11 @@ export const fetchFees = async (req, res) => {
       });
 
       const existingStudentIds = new Set(
-        existingFees.map((f) => f.studentId.toString())
+        existingFees.map((f) => f.studentId.toString()),
       );
 
       const missingStudents = students.filter(
-        (s) => !existingStudentIds.has(s._id.toString())
+        (s) => !existingStudentIds.has(s._id.toString()),
       );
 
       if (missingStudents.length > 0) {
@@ -626,7 +626,7 @@ export const fetchFees = async (req, res) => {
           year: yearNum,
           status: "unpaid",
         },
-        { $set: { status: "not_paid_on_time" } }
+        { $set: { status: "not_paid_on_time" } },
       );
     }
 
@@ -656,19 +656,15 @@ export const fetchFees = async (req, res) => {
     const totalStudents = allfees.length;
 
     const paidOnTime = allfees.filter(
-      (f) => f.status === "paid_on_time"
+      (f) => f.status === "paid_on_time",
     ).length;
 
-    const paidLate = allfees.filter(
-      (f) => f.status === "paid_late"
-    ).length;
+    const paidLate = allfees.filter((f) => f.status === "paid_late").length;
 
-    const unpaid = allfees.filter(
-      (f) => f.status === "unpaid"
-    ).length;
+    const unpaid = allfees.filter((f) => f.status === "unpaid").length;
 
     const notPaidOnTime = allfees.filter(
-      (f) => f.status === "not_paid_on_time"
+      (f) => f.status === "not_paid_on_time",
     ).length;
 
     const totalUnpaid = unpaid + notPaidOnTime;
@@ -688,13 +684,11 @@ export const fetchFees = async (req, res) => {
 
       const alreadyCalculated =
         pointsDoc?.history?.some(
-          (h) => h.reason === "Fee payment performance"
+          (h) => h.reason === "Fee payment performance",
         ) ?? false;
 
       if (!alreadyCalculated) {
-        const deductedPoints = Math.round(
-          (totalUnpaid / totalStudents) * 20
-        );
+        const deductedPoints = Math.round((totalUnpaid / totalStudents) * 20);
 
         await monthlyPoints.findOneAndUpdate(
           {
@@ -717,7 +711,7 @@ export const fetchFees = async (req, res) => {
               },
             },
           },
-          { upsert: true }
+          { upsert: true },
         );
 
         pointsAction = {
@@ -758,7 +752,6 @@ export const fetchFees = async (req, res) => {
       availableMonths: availableMonths.sort((a, b) => a - b),
       availableYears: availableYears.sort((a, b) => a - b),
     });
-
   } catch (error) {
     console.error(error);
     res.status(500).json({
@@ -1000,5 +993,112 @@ export const markComplete = async (req, res) => {
   } catch (error) {
     console.log(error.message);
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const fetchstatsforAFaculty = async (req, res) => {
+  try {
+    const clerkId = req.userId;
+
+    if (!clerkId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // ✅ Get faculty
+    const faculty = await Faculty.findOne({ clerkId });
+    if (!faculty) {
+      return res.status(404).json({
+        success: false,
+        message: "Faculty not found",
+      });
+    }
+
+    const facultyId = faculty._id;
+
+    // =====================================================
+    // 📊 STUDENT STATS
+    // =====================================================
+
+    const totalStudents = await Student.countDocuments({
+      facultyId,
+    });
+
+    const activeStudents = await Student.countDocuments({
+      facultyId,
+      status: "active",
+    });
+
+    const completedStudents = await Student.countDocuments({
+      facultyId,
+      status: "completed", // adjust if you use different status
+    });
+
+    // =====================================================
+    // 💰 FEES STATS (CURRENT MONTH)
+    // =====================================================
+
+    const today = new Date();
+    const currentMonth = today.getMonth() + 1;
+    const currentYear = today.getFullYear();
+
+    const allFees = await fees.find({
+      facultyId,
+      month: currentMonth,
+      year: currentYear,
+    });
+
+    const totalFeesCount = allFees.length;
+
+    const paidFees = allFees.filter(
+      (f) => f.status === "paid_on_time" || f.status === "paid_late",
+    );
+
+    const pendingFees = allFees.filter(
+      (f) => f.status === "unpaid" || f.status === "not_paid_on_time",
+    );
+
+    // =====================================================
+    // 💵 REVENUE
+    // =====================================================
+
+    const totalRevenue = paidFees.reduce((sum, f) => sum + (f.amount || 0), 0);
+
+    const pendingRevenue = pendingFees.reduce(
+      (sum, f) => sum + (f.amount || 0),
+      0,
+    );
+
+    // =====================================================
+    // 📤 RESPONSE
+    // =====================================================
+
+    res.json({
+      success: true,
+      data: {
+        students: {
+          total: totalStudents,
+          active: activeStudents,
+          completed: completedStudents,
+        },
+        fees: {
+          totalFees: totalFeesCount,
+          paid: paidFees.length,
+          pending: pendingFees.length,
+        },
+        revenue: {
+          collected: totalRevenue,
+          pending: pendingRevenue,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Stats Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 };

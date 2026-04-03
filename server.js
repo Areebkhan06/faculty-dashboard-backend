@@ -13,7 +13,7 @@ const app = express();
 // =========================
 app.use(
   cors({
-    origin: "https://faculty-dashboard-front.vercel.app",
+    origin: "http://localhost:3000",
     credentials: true,
   })
 );
