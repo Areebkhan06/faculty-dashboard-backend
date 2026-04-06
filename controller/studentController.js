@@ -821,7 +821,7 @@ export const markFeePaid = async (req, res) => {
     const paidOnTime = (isSameMonth && isBeforeDueDate) || isPreviousMonth;
 
     fee.status = paidOnTime ? "paid_on_time" : "paid_late";
-    fee.paidAt = today;
+    fee.paidDate = today;
 
     await fee.save();
 
