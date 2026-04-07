@@ -892,7 +892,6 @@ export const deleteAllStudents = async (req, res) => {
   try {
     const clerkId = req.userId;
 
-    // ✅ Find faculty
     const faculty = await Faculty.findOne({ clerkId });
 
     if (!faculty) {
@@ -902,14 +901,29 @@ export const deleteAllStudents = async (req, res) => {
       });
     }
 
-    // ✅ Delete all students of this faculty
     const result = await Student.deleteMany({
       facultyId: faculty._id,
     });
 
+    // ✅ ONLY CURRENT MONTH RESET
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    await monthlyPoints.updateOne(
+      {
+        facultyId: faculty._id,
+        month: currentMonth,
+        year: currentYear,
+      },
+      {
+        $set: { totalPoints: 0 },
+      }
+    );
+
     res.status(200).json({
       success: true,
-      message: "All students deleted successfully",
+      message: "All students deleted & current month points reset",
       deletedCount: result.deletedCount,
     });
   } catch (error) {
