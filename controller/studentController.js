@@ -901,14 +901,20 @@ export const deleteAllStudents = async (req, res) => {
       });
     }
 
-    // ✅ Get all student IDs first
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    // ✅ Get student IDs
     const students = await Student.find({ facultyId: faculty._id }, { _id: 1 });
 
     const studentIds = students.map((s) => s._id);
 
-    // ✅ Delete fees related to those students
+    // ✅ Delete ONLY current month fees
     await fees.deleteMany({
       student: { $in: studentIds },
+      month: currentMonth,
+      year: currentYear,
     });
 
     // ✅ Delete students
@@ -917,12 +923,11 @@ export const deleteAllStudents = async (req, res) => {
     });
 
     // ✅ Reset current month points
-    const now = new Date();
     await monthlyPoints.updateOne(
       {
         facultyId: faculty._id,
-        month: now.getMonth() + 1,
-        year: now.getFullYear(),
+        month: currentMonth,
+        year: currentYear,
       },
       {
         $set: { totalPoints: 0 },
@@ -931,7 +936,7 @@ export const deleteAllStudents = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "All students & their fees deleted, points reset",
+      message: "Students deleted & current month fees cleared",
       deletedCount: result.deletedCount,
     });
   } catch (error) {
