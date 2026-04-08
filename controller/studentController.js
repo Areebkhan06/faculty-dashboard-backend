@@ -763,7 +763,7 @@ export const fetchFees = async (req, res) => {
 // controllers/feeController.js — markFeePaid
 export const markFeePaid = async (req, res) => {
   try {
-    const { feeId } = req.body;
+    const { feeId,paidAt } = req.body;
     const clerkId = req.userId;
 
     if (!clerkId) {
@@ -821,7 +821,7 @@ export const markFeePaid = async (req, res) => {
     const paidOnTime = (isSameMonth && isBeforeDueDate) || isPreviousMonth;
 
     fee.status = paidOnTime ? "paid_on_time" : "paid_late";
-    fee.paidDate = today;
+    fee.paidDate = paidAt;
 
     await fee.save();
 
