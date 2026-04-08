@@ -763,7 +763,7 @@ export const fetchFees = async (req, res) => {
 // controllers/feeController.js — markFeePaid
 export const markFeePaid = async (req, res) => {
   try {
-    const { feeId,paidAt } = req.body;
+    const { feeId, paidAt } = req.body;
     const clerkId = req.userId;
 
     if (!clerkId) {
@@ -912,7 +912,7 @@ export const deleteAllStudents = async (req, res) => {
 
     // ✅ Delete ONLY current month fees
     await fees.deleteMany({
-      student: { $in: studentIds },
+      studentId: { $in: studentIds },
       month: currentMonth,
       year: currentYear,
     });
