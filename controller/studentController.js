@@ -766,6 +766,9 @@ export const markFeePaid = async (req, res) => {
     const { feeId, paidAt } = req.body;
     const clerkId = req.userId;
 
+    // ======================
+    // 🔐 AUTH CHECK
+    // ======================
     if (!clerkId) {
       return res.status(401).json({
         success: false,
@@ -773,7 +776,9 @@ export const markFeePaid = async (req, res) => {
       });
     }
 
-    // ✅ Get faculty
+    // ======================
+    // 👨‍🏫 GET FACULTY
+    // ======================
     const faculty = await Faculty.findOne({ clerkId });
     if (!faculty) {
       return res.status(404).json({
@@ -784,7 +789,9 @@ export const markFeePaid = async (req, res) => {
 
     const facultyId = faculty._id;
 
-    // ✅ Get fee
+    // ======================
+    // 💰 GET FEE
+    // ======================
     const fee = await fees.findById(feeId);
     if (!fee) {
       return res.status(404).json({
@@ -793,7 +800,9 @@ export const markFeePaid = async (req, res) => {
       });
     }
 
-    // ❌ Prevent duplicate payment
+    // ======================
+    // ❌ PREVENT DUPLICATE
+    // ======================
     if (fee.status === "paid_on_time" || fee.status === "paid_late") {
       return res.status(400).json({
         success: false,
@@ -802,53 +811,64 @@ export const markFeePaid = async (req, res) => {
     }
 
     // ======================
-    // ✅ DATE LOGIC
+    // 📅 DATE LOGIC (FIXED)
     // ======================
-    const today = new Date();
 
-    const currentDay = today.getDate();
-    const currentMonth = today.getMonth() + 1;
-    const currentYear = today.getFullYear();
+    // Use paidAt if provided, else fallback to current date
+    const paymentDate = paidAt ? new Date(paidAt) : new Date();
 
-    const isSameMonth = currentMonth === fee.month && currentYear === fee.year;
+    const paidDay = paymentDate.getDate();
+    const paidMonth = paymentDate.getMonth() + 1;
+    const paidYear = paymentDate.getFullYear();
 
-    const isBeforeDueDate = currentDay <= 7;
+    // Same month payment
+    const isSameMonth =
+      paidMonth === fee.month && paidYear === fee.year;
 
+    // Before 8th (1–7 = on time)
+    const isBeforeDueDate = paidDay <= 7;
+
+    // Previous month payment (still considered on time)
     const isPreviousMonth =
-      (currentYear === fee.year && currentMonth === fee.month - 1) ||
-      (fee.month === 1 && currentMonth === 12 && currentYear === fee.year - 1);
+      (paidYear === fee.year && paidMonth === fee.month - 1) ||
+      (fee.month === 1 &&
+        paidMonth === 12 &&
+        paidYear === fee.year - 1);
 
-    const paidOnTime = (isSameMonth && isBeforeDueDate) || isPreviousMonth;
+    // Final decision
+    const paidOnTime =
+      (isSameMonth && isBeforeDueDate) || isPreviousMonth;
 
+    // Update fee
     fee.status = paidOnTime ? "paid_on_time" : "paid_late";
-    fee.paidDate = paidAt;
+    fee.paidDate = paymentDate;
 
     await fee.save();
 
     // ======================
-    // 🎯 FAIR INCREMENT SYSTEM
+    // 🎯 FAIR POINT SYSTEM
     // ======================
-
     let pointsData = null;
 
     if (paidOnTime) {
       const MAX_POINTS = 50;
 
-      // total students
+      // Total students under faculty
       const totalStudents = await Student.countDocuments({ facultyId });
 
       const perStudentPoint =
         totalStudents > 0 ? MAX_POINTS / totalStudents : 0;
 
-      // ✅ ALWAYS USE CURRENT MONTH
-      const pointsMonth = today.getUTCMonth() + 1;
-      const pointsYear = today.getUTCFullYear();
+      // Always add points to CURRENT month
+      const now = new Date();
+      const pointsMonth = now.getUTCMonth() + 1;
+      const pointsYear = now.getUTCFullYear();
 
       pointsData = await monthlyPoints.findOneAndUpdate(
         {
           facultyId,
-          month: pointsMonth, // ✅ FIXED
-          year: pointsYear, // ✅ FIXED
+          month: pointsMonth,
+          year: pointsYear,
         },
         {
           $inc: { totalPoints: perStudentPoint },
@@ -865,16 +885,19 @@ export const markFeePaid = async (req, res) => {
           upsert: true,
           new: true,
           setDefaultsOnInsert: true,
-        },
+        }
       );
     }
 
+    // ======================
+    // ✅ RESPONSE
+    // ======================
     res.json({
       success: true,
       fee,
       points: pointsData,
       message: paidOnTime
-        ? "Fee paid on time + points added to current month 🎉"
+        ? "Fee paid on time + points added 🎉"
         : "Fee paid late (no points)",
     });
   } catch (err) {
@@ -886,7 +909,6 @@ export const markFeePaid = async (req, res) => {
     });
   }
 };
-
 // DELETE STUDENTS OF LOGGED-IN FACULTY
 export const deleteAllStudents = async (req, res) => {
   try {
