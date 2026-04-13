@@ -5,6 +5,7 @@ import fees from "../model/fees.js";
 import fs from "fs";
 import cron from "node-cron";
 import monthlyPoints from "../model/monthlyPoints.js";
+import mongoose from "mongoose";
 
 // ─── JOB 2: On 8th of every month — mark unpaid → not_paid_on_time + deduct points ──
 
@@ -822,8 +823,7 @@ export const markFeePaid = async (req, res) => {
     const paidYear = paymentDate.getFullYear();
 
     // Same month payment
-    const isSameMonth =
-      paidMonth === fee.month && paidYear === fee.year;
+    const isSameMonth = paidMonth === fee.month && paidYear === fee.year;
 
     // Before 8th (1–7 = on time)
     const isBeforeDueDate = paidDay <= 7;
@@ -831,13 +831,10 @@ export const markFeePaid = async (req, res) => {
     // Previous month payment (still considered on time)
     const isPreviousMonth =
       (paidYear === fee.year && paidMonth === fee.month - 1) ||
-      (fee.month === 1 &&
-        paidMonth === 12 &&
-        paidYear === fee.year - 1);
+      (fee.month === 1 && paidMonth === 12 && paidYear === fee.year - 1);
 
     // Final decision
-    const paidOnTime =
-      (isSameMonth && isBeforeDueDate) || isPreviousMonth;
+    const paidOnTime = (isSameMonth && isBeforeDueDate) || isPreviousMonth;
 
     // Update fee
     fee.status = paidOnTime ? "paid_on_time" : "paid_late";
@@ -885,7 +882,7 @@ export const markFeePaid = async (req, res) => {
           upsert: true,
           new: true,
           setDefaultsOnInsert: true,
-        }
+        },
       );
     }
 
@@ -1146,6 +1143,115 @@ export const fetchstatsforAFaculty = async (req, res) => {
   } catch (error) {
     console.error("Stats Error:", error);
     res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+export const fetchStudentAllDetails = async (req, res) => {
+  try {
+    const { slug } = req.body;
+    const clerkId = req.userId;
+
+    // 🔐 Check auth
+    if (!clerkId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // ❌ Check slug
+    if (!slug) {
+      return res.status(400).json({
+        success: false,
+        message: "Student ID (slug) is required",
+      });
+    }
+
+    // ✅ Fetch student
+    const student = await Student.findById(slug);
+    console.log(student);
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    // ✅ Success response
+    return res.status(200).json({
+      success: true,
+      student,
+    });
+  } catch (error) {
+    console.error("Fetch Student Error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+export const updateStudent = async (req, res) => {
+  try {
+    const clerkId = req.userId;
+
+    if (!clerkId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const { _id, monthlyFee } = req.body; // ✅ get id
+
+    if (!_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Student ID is required",
+      });
+    }
+
+    // ✅ FIXED
+    const student = await Student.findByIdAndUpdate(_id, req.body, {
+      returnDocument: "after",
+    });
+
+    console.log("found", student);
+
+    const now = new Date();
+
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    const Fee = await fees.findOneAndUpdate(
+      {
+        studentId: student._id,
+        month: currentMonth,
+        year: currentYear,
+      },
+      {
+        $set: {
+          amount: Number(monthlyFee), // ✅ update only amount
+        },
+      },
+      { returnDocument: "after" },
+    );
+
+    console.log("found fee", Fee);
+
+    return res.status(200).json({
+      success: true,
+      student,
+    });
+  } catch (error) {
+    console.error("Update Student Error:", error.message);
+
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
